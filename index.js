@@ -34,6 +34,10 @@ async function run() {
     const bannerCollection = client.db("medicareDb").collection("banners");
     const testCollection = client.db("medicareDb").collection("tests");
     const reservationCollection = client.db("medicareDb").collection("reservations");
+    const suggestionCollection = client.db("medicareDb").collection("suggestions");
+    const reportCollection = client.db("medicareDb").collection("report");
+    const FaqCollection = client.db("medicareDb").collection("Faqs");
+    const BlogCollection = client.db("medicareDb").collection("blogs");
     // Token and admin related middlewares
     const verifyToken = async (req, res, next) => {
       if (!req.headers.authorization) {
@@ -109,6 +113,19 @@ async function run() {
       const result = await userCollection.findOne(query);
       res.send(result);
     })
+    app.get('/user/active/:email', async (req, res) => {
+      const email = req.params.email;
+      const query = { email: email }
+      const user = await userCollection.findOne(query);
+      let isActive = true;
+      if (user) {
+        isActive = user?.isActive !== false;
+      }
+
+      res.send(isActive);
+
+
+    })
 
     app.post('/user', async (req, res) => {
       const user = req.body;
@@ -159,6 +176,17 @@ async function run() {
 
 
     })
+    // Blogs Related API
+    app.get('/blogs',async(req,res)=>{
+      const result = await BlogCollection.find().toArray();
+      res.send(result);
+    })
+    app.get('/blog/:id',async(req,res)=>{
+      const id = req.params.id;
+      const query = {_id: new ObjectId(id)};
+      const result = await BlogCollection.findOne(query);
+      res.send(result);
+    })
 
     // Bannner related API
     app.get('/banners',  async (req, res) => {
@@ -192,6 +220,31 @@ async function run() {
     })
     // Test related API
     app.get('/allTests', async (req, res) => {
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 12;
+      const currentDate = new Date();
+      const query = { 
+        $or: [
+            { date: { $type: 'date', $gte: currentDate } }, 
+            { $expr: { $gte: [ { $toDate: '$date' }, currentDate ] } } 
+        ]
+    };
+      const tests = await testCollection.find(query)
+      .sort({ date: 1 }) 
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .toArray();
+      const totalTests = await testCollection.countDocuments(query);
+      const totalPages = Math.ceil(totalTests / limit);
+      res.send({
+        tests,
+        currentPage: page,
+        totalPages,
+      });
+      
+     
+    })
+    app.get('/allTests/admin',verifyToken,verifyAdmin, async (req, res) => {
       const result = await testCollection.find().toArray();
       res.send(result);
     })
@@ -277,19 +330,99 @@ async function run() {
 
     // reservations related API
     app.get('/reservations',verifyToken,verifyAdmin,async(req,res)=>{
-      const result = await reservationCollection.find().toArray();
+      const query = {status : 'pending'}
+      const result = await reservationCollection.find(query).toArray();
+      res.send(result);
+    })
+    app.get('/reservation/:id',verifyToken,verifyAdmin,async(req,res)=>{
+      const id = req.params.id;
+      const query = {_id: new ObjectId(id)}
+      const result = await reservationCollection.findOne(query);
+      res.send(result);
+    })
+    app.get('/reservations/:id',verifyToken,verifyAdmin,async(req,res)=>{
+      const id = req.params.id;
+      const query = {testId: id,status: 'pending'}
+      const result = await reservationCollection.find(query).toArray();
       res.send(result);
     })
 
     app.get('/appointments/:email',verifyToken,async(req,res) =>{
       const email = req.params.email;
-      const query = { email : email}
+      const query = { email : email,status: 'pending'}
       const result = await reservationCollection.find(query).toArray();
       res.send(result);
     })
 
+    app.delete('/appointment/delete/:id/:testId',verifyToken,async(req,res)=>{
+      const id = req.params.id;
+      const testId = req.params.testId;
+      const query = {_id : new ObjectId(id)};
+      const testQuery = {_id : new ObjectId(testId)}
+      
+      const updatedDoc ={
+        
+        
+        $inc:{
+          slots : 1,
+          reservations: -1
+        }
+        
+      }
+      
+      await testCollection.updateOne(testQuery,updatedDoc);
+      const result = await reservationCollection.deleteOne(query);
+      res.send(result);
+    })
 
 
+    // feautered tests related api
+    app.get('/feautered-tests', async (req, res) => {
+      const result = await testCollection.find({ reservations: { $gt: 2 } }).toArray();
+      res.send(result);
+  });
+
+  // Suggestions related API
+  app.get('/suggestions',async(req,res)=>{
+    const result = await suggestionCollection.find().toArray();
+    res.send(result);
+  })
+
+  // Report related API
+  app.get('/reports/:email',verifyToken,async(req,res)=>{
+    const email = req.params.email;
+    const query = { "testResults.testInfo.email" : email};
+    const result = await reportCollection.find(query).toArray();
+    res.send(result);
+
+  })
+  app.get('/report/:id',verifyToken,async(req,res)=>{
+    const id = req.params.id;
+    const query = { _id : new ObjectId(id)};
+    const result = await reportCollection.findOne(query);
+    res.send(result);
+
+  })
+  app.post('/report/:id',verifyToken,verifyAdmin,async(req,res)=>{
+    const id = req.params.id;
+    const query = {_id: new ObjectId(id)};
+    const report = req.body;
+    const updatedDoc ={
+      $set:{
+        status: "delivered"
+
+      }
+    }
+    await reservationCollection.updateOne(query,updatedDoc);
+    const result = await reportCollection.insertOne(report);
+    res.send(result);
+  })
+  // Faq related Api
+  app.get('/faq',async(req,res)=>{
+    const result = await FaqCollection.find().toArray();
+    res.send(result);
+  })
+  
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
